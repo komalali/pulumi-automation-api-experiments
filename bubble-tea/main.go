@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,9 +19,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
-// define our program that creates our pulumi resources.
-// we refer to this style as "inline" pulumi programs where both program + automation can be compiled in the same
-// binary. no need for separate projects.
+// pulumiProgram is the Pulumi program itself where resources are declared. It deploys a simple static website to S3.
 func pulumiProgram(ctx *pulumi.Context) error {
 	// similar go git_repo_program, our program defines a s3 website.
 	// here we create the bucket
@@ -76,7 +76,10 @@ func pulumiProgram(ctx *pulumi.Context) error {
 	return nil
 }
 
-func runPulumiUpdate(destroy bool, sub chan logMessage, events chan events.EngineEvent) tea.Cmd {
+// runPulumiUpdate runs the update or destroy commands based on input.
+// It takes as arguments a flag to determine update or destroy, a channel to receive log messages
+// and another to receive structured events from the Pulumi Engine.
+func runPulumiUpdate(destroy bool, logChannel chan<- logMessage, eventChannel chan<- events.EngineEvent) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -93,11 +96,11 @@ func runPulumiUpdate(destroy bool, sub chan logMessage, events chan events.Engin
 			os.Exit(1)
 		}
 
-		sub <- logMessage{msg: fmt.Sprintf("Created/Selected stack %q\n", stackName)}
+		logChannel <- logMessage{msg: fmt.Sprintf("Created/Selected stack %q\n", stackName)}
 
 		w := s.Workspace()
 
-		sub <- logMessage{msg: fmt.Sprintf("Installing the AWS plugin")}
+		logChannel <- logMessage{msg: fmt.Sprintf("Installing the AWS plugin")}
 
 		// for inline source programs, we must manage plugins ourselves
 		err = w.InstallPlugin(ctx, "aws", "v3.2.1")
@@ -106,13 +109,13 @@ func runPulumiUpdate(destroy bool, sub chan logMessage, events chan events.Engin
 			os.Exit(1)
 		}
 
-		sub <- logMessage{msg: fmt.Sprintf("Successfully installed AWS plugin")}
+		logChannel <- logMessage{msg: fmt.Sprintf("Successfully installed AWS plugin")}
 
 		// set stack configuration specifying the AWS region to deploy
 		err = s.SetConfig(ctx, "aws:region", auto.ConfigValue{Value: "us-west-2"})
 
-		sub <- logMessage{msg: fmt.Sprintf("Successfully set config")}
-		sub <- logMessage{msg: fmt.Sprintf("Running refresh...")}
+		logChannel <- logMessage{msg: fmt.Sprintf("Successfully set config")}
+		logChannel <- logMessage{msg: fmt.Sprintf("Running refresh...")}
 
 		_, err = s.Refresh(ctx)
 		if err != nil {
@@ -120,44 +123,39 @@ func runPulumiUpdate(destroy bool, sub chan logMessage, events chan events.Engin
 			os.Exit(1)
 		}
 
-		sub <- logMessage{msg: fmt.Sprintf("Refresh succeeded!")}
+		logChannel <- logMessage{msg: fmt.Sprintf("Refresh succeeded!")}
 
 		if destroy {
-			fmt.Println("Running destroy...")
-
-			eventStream := optdestroy.EventStreams(events)
+			logChannel <- logMessage{msg: fmt.Sprintf("Running destroy...")}
 
 			// destroy our stack and exit early
-			_, err := s.Destroy(ctx, eventStream)
+			_, err := s.Destroy(ctx, optdestroy.EventStreams(eventChannel))
 			if err != nil {
 				fmt.Printf("Failed to destroy stack: %v", err)
 			}
-			sub <- logMessage{msg: fmt.Sprintf("Stack successfully destroyed")}
-			os.Exit(0)
+			logChannel <- logMessage{msg: fmt.Sprintf("Stack successfully destroyed")}
+			return logMessage{msg: "Success"}
 		}
 
-		sub <- logMessage{msg: fmt.Sprintf("Running update...")}
-
-		// wire up our event stream
-		eventStream := optup.EventStreams(events)
+		logChannel <- logMessage{msg: fmt.Sprintf("Running update...")}
 
 		// run the update to deploy our s3 website
-		res, err := s.Up(ctx, eventStream)
+		res, err := s.Up(ctx, optup.EventStreams(eventChannel))
 		if err != nil {
 			fmt.Printf("Failed to update stack: %v\n\n", err)
 			os.Exit(1)
 		}
 
-		sub <- logMessage{msg: fmt.Sprintf("Update succeeded!")}
+		logChannel <- logMessage{msg: fmt.Sprintf("Update succeeded!")}
 
 		// get the URL from the stack outputs
 		url, ok := res.Outputs["websiteUrl"].Value.(string)
 		if !ok {
-			fmt.Println("Failed to unmarshall output URL")
+			fmt.Println("Failed to unmarshal output URL")
 			os.Exit(1)
 		}
 
-		sub <- logMessage{msg: fmt.Sprintf("URL: %s\n", url)}
+		logChannel <- logMessage{msg: fmt.Sprintf("URL: %s\n", url)}
 		return logMessage{msg: "Success"}
 	}
 }
@@ -179,20 +177,22 @@ type logMessage struct {
 }
 
 type model struct {
-	events         chan events.EngineEvent // where we'll receive engine events
-	sub            chan logMessage         // where we'll receive activity notifications
-	spinner        spinner.Model
-	destroy        bool
-	eventsReceived int
-	quitting       bool
-	message        string
+	eventChannel      chan events.EngineEvent // where we'll receive engine events
+	logChannel        chan logMessage         // where we'll receive log messages
+	spinner           spinner.Model
+	destroy           bool
+	eventsReceived    int
+	quitting          bool
+	currentMessage    string
+	updatesInProgress map[string]string // resources with updates in progress
+	updatesComplete   map[string]string // resources with updates completed
 }
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		watchForLogMessages(m.sub),
-		runPulumiUpdate(m.destroy, m.sub, m.events),
-		watchForEvents(m.events),
+		watchForLogMessages(m.logChannel),
+		runPulumiUpdate(m.destroy, m.logChannel, m.eventChannel),
+		watchForEvents(m.eventChannel),
 		spinner.Tick,
 	)
 }
@@ -200,8 +200,15 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case events.EngineEvent:
-		m.eventsReceived++                 // record external activity
-		return m, watchForEvents(m.events) // wait for next event
+		if msg.ResourcePreEvent != nil {
+			m.updatesInProgress[msg.ResourcePreEvent.Metadata.URN] = msg.ResourcePreEvent.Metadata.Type
+		}
+		if msg.ResOutputsEvent != nil {
+			urn := msg.ResOutputsEvent.Metadata.URN
+			m.updatesComplete[urn] = msg.ResOutputsEvent.Metadata.Type
+			delete(m.updatesInProgress, urn)
+		}
+		return m, watchForEvents(m.eventChannel) // wait for next event
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -211,18 +218,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case logMessage:
 		if msg.msg == "Success" {
-			m.message = "Succeeded!"
+			m.currentMessage = "Succeeded!"
 			return m, tea.Quit
 		}
-		m.message = msg.msg
-		return m, watchForLogMessages(m.sub)
+		m.currentMessage = msg.msg
+		return m, watchForLogMessages(m.logChannel)
 	default:
 		return m, nil
 	}
 }
 
 func (m model) View() string {
-	s := fmt.Sprintf("\n %sCurrent step: %s\n\n Events received: %d\n\n Press any key to exit\n", m.spinner.View(), m.message, m.eventsReceived)
+	inProgressText := ""
+	completedText := ""
+	if len(m.updatesInProgress) > 0 || len(m.updatesComplete) > 0 {
+		var inProgVals []string
+		for _, v := range m.updatesInProgress {
+			inProgVals = append(inProgVals, v)
+		}
+		sort.Strings(inProgVals)
+		inProgressText = fmt.Sprintf("\n\nUpdate in progress: [%s]", strings.Join(inProgVals, ", "))
+
+		var completedVals []string
+		for _, v := range m.updatesComplete {
+			completedVals = append(completedVals, v)
+		}
+		sort.Strings(completedVals)
+		completedText = fmt.Sprintf("\n\nUpdate complete: [%s]", strings.Join(completedVals, ", "))
+	}
+
+	s := fmt.Sprintf("\n%sCurrent step: %s%s%s\n", m.spinner.View(), m.currentMessage, inProgressText, completedText)
 	if m.quitting {
 		s += "\n"
 	}
@@ -244,10 +269,12 @@ func main() {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	p := tea.NewProgram(model{
-		sub:     make(chan logMessage),
-		events:  make(chan events.EngineEvent),
-		destroy: destroy,
-		spinner: s,
+		logChannel:        make(chan logMessage),
+		eventChannel:      make(chan events.EngineEvent),
+		destroy:           destroy,
+		spinner:           s,
+		updatesInProgress: map[string]string{},
+		updatesComplete:   map[string]string{},
 	})
 
 	if p.Start() != nil {
