@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/term"
 
 	"github.com/pulumi/pulumi-aws/sdk/v4/go/aws/s3"
 	"github.com/pulumi/pulumi/sdk/v3/go/auto"
@@ -17,6 +18,44 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/auto/optdestroy"
 	"github.com/pulumi/pulumi/sdk/v3/go/auto/optup"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+)
+
+const columnWidth = 50
+
+// Style definitions.
+var (
+	subtle  = lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
+	special = lipgloss.AdaptiveColor{Light: "#43BF6D", Dark: "#73F59F"}
+
+	list = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), false, true, false, false).
+		BorderForeground(subtle).
+		MarginRight(2).
+		Height(8).
+		Width(columnWidth + 1)
+
+	listHeader = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderBottom(true).
+			BorderForeground(subtle).
+			MarginRight(2).
+			Render
+
+	listItem = lipgloss.NewStyle().PaddingLeft(2).Render
+
+	checkMark = lipgloss.NewStyle().SetString("✓").
+			Foreground(special).
+			PaddingRight(1).
+			String()
+
+	listDone = func(s string) string {
+		return checkMark + lipgloss.NewStyle().
+			Strikethrough(true).
+			Foreground(lipgloss.AdaptiveColor{Light: "#969B86", Dark: "#696969"}).
+			Render(s)
+	}
+
+	docStyle = lipgloss.NewStyle().Padding(1, 2, 1, 2)
 )
 
 // pulumiProgram is the Pulumi program itself where resources are declared. It deploys a simple static website to S3.
@@ -234,25 +273,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View displays the state in the terminal
 func (m model) View() string {
-	inProgressText := ""
-	completedText := ""
+	var inProgVals []string
+	var completedVals []string
+	doc := strings.Builder{}
 	if len(m.updatesInProgress) > 0 || len(m.updatesComplete) > 0 {
-		var inProgVals []string
 		for _, v := range m.updatesInProgress {
-			inProgVals = append(inProgVals, v)
+			inProgVals = append(inProgVals, listItem(v))
 		}
 		sort.Strings(inProgVals)
-		inProgressText = fmt.Sprintf("\n\nUpdate in progress: [%s]", strings.Join(inProgVals, ", "))
-
-		var completedVals []string
 		for _, v := range m.updatesComplete {
-			completedVals = append(completedVals, v)
+			completedVals = append(completedVals, listDone(v))
 		}
 		sort.Strings(completedVals)
-		completedText = fmt.Sprintf("\n\nUpdate complete: [%s]", strings.Join(completedVals, ", "))
+
+		inProgVals = append([]string{listHeader("Updates in progress")}, inProgVals...)
+		completedVals = append([]string{listHeader("Updates completed")}, completedVals...)
+		lists := lipgloss.JoinHorizontal(lipgloss.Top,
+			list.Render(
+				lipgloss.JoinVertical(lipgloss.Left,
+					inProgVals...,
+				),
+			),
+			list.Copy().Width(columnWidth).Render(
+				lipgloss.JoinVertical(lipgloss.Left,
+					completedVals...,
+				),
+			),
+		)
+		doc.WriteString("\n")
+		doc.WriteString(lists)
 	}
 
-	s := fmt.Sprintf("\n%sCurrent step: %s%s%s\n", m.spinner.View(), m.currentMessage, inProgressText, completedText)
+	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	if physicalWidth > 0 {
+		docStyle = docStyle.MaxWidth(physicalWidth)
+	}
+
+	s := fmt.Sprintf("\n%sCurrent step: %s%s\n", m.spinner.View(), m.currentMessage, docStyle.Render(doc.String()))
 	if m.quitting {
 		s += "\n"
 	}

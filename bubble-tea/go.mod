@@ -8,4 +8,5 @@ require (
 	github.com/charmbracelet/lipgloss v0.1.2
 	github.com/pulumi/pulumi-aws/sdk/v4 v4.0.0-beta.2
 	github.com/pulumi/pulumi/sdk/v3 v3.0.0-beta.2
+	golang.org/x/term v0.0.0-20210406210042-72f3dc4e9b72
 )
