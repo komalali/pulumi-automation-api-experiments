@@ -1,4 +1,4 @@
-module github.com/pulumi/automation-api-examples/go/inline_program
+module github.com/komalali/pulumi-automation-api-experiments/bubble-tea
 
 go 1.14
 
