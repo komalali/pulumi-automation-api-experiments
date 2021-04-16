@@ -160,12 +160,14 @@ func runPulumiUpdate(destroy bool, logChannel chan<- logMessage, eventChannel ch
 	}
 }
 
+// watchForLogMessages forwards any log messages to the `Update` method
 func watchForLogMessages(msg chan logMessage) tea.Cmd {
 	return func() tea.Msg {
 		return <-msg
 	}
 }
 
+// watchForEvents forwards any engine events to the `Update` method
 func watchForEvents(event chan events.EngineEvent) tea.Cmd {
 	return func() tea.Msg {
 		return <-event
@@ -176,18 +178,19 @@ type logMessage struct {
 	msg string
 }
 
+// model is the struct that holds the state for this program
 type model struct {
 	eventChannel      chan events.EngineEvent // where we'll receive engine events
 	logChannel        chan logMessage         // where we'll receive log messages
 	spinner           spinner.Model
 	destroy           bool
-	eventsReceived    int
 	quitting          bool
 	currentMessage    string
 	updatesInProgress map[string]string // resources with updates in progress
 	updatesComplete   map[string]string // resources with updates completed
 }
 
+// Init runs any IO needed at the initialization of the program
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		watchForLogMessages(m.logChannel),
@@ -197,6 +200,7 @@ func (m model) Init() tea.Cmd {
 	)
 }
 
+// Update acts on any events and updates state (model) accordingly
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case events.EngineEvent:
@@ -228,6 +232,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// View displays the state in the terminal
 func (m model) View() string {
 	inProgressText := ""
 	completedText := ""
