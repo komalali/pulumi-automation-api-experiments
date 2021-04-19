@@ -7,13 +7,13 @@
         "declaration": true,
         "sourceMap": true,
         "jsx": "react",
-        "allowSyntheticDefaultImports": true
+        "skipLibCheck": true
     },
     "include": [
         "index.tsx"
     ],
     "exclude": [
-        "**/node_modules",
+        "node_modules",
         "bin"
     ]
 }

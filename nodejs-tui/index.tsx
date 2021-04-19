@@ -1,11 +1,14 @@
 import * as inquirer from "inquirer";
 import * as React from "react";
 import { render, Text } from "ink";
+import Spinner from "ink-spinner";
 
 import { s3 } from "@pulumi/aws";
 import { PolicyDocument } from "@pulumi/aws/iam";
 import { InlineProgramArgs, LocalWorkspace } from "@pulumi/pulumi/automation";
-import { Color } from "chalk";
+
+const green = "green";
+const red = "red";
 
 // This is our pulumi program in "inline function" form
 const pulumiProgram = async () => {
@@ -74,7 +77,9 @@ interface UpdateProps {
 
 const Update = (props: UpdateProps) => {
     const [message, setMessage] = React.useState("");
-    const [textColor, setColor] = React.useState("green");
+    const [color, setColor] = React.useState(undefined);
+    const [done, setDone] = React.useState(false);
+    const [emoji, setEmoji] = React.useState("✅");
 
     React.useEffect(() => {
         const runPulumiUpdate = async () => {
@@ -103,6 +108,7 @@ const Update = (props: UpdateProps) => {
                     await stack.workspace.removeStack(stack.name);
 
                     setMessage("Success!");
+                    setDone(true);
                     return;
                 }
 
@@ -110,16 +116,31 @@ const Update = (props: UpdateProps) => {
                 await stack.up();
 
                 setMessage("Success!");
+                setDone(true);
             } catch (error) {
-                setColor("red");
+                setColor(red);
                 setMessage(`Failure!: ${error.error()}`);
+                setEmoji("❌");
+                setDone(true);
             }
         };
 
         runPulumiUpdate();
     }, []);
 
-    return <Text color={textColor}>Current step: {message}</Text>;
+    if (done) {
+        return <Text color={color}>{`\n${emoji} ${message}`}</Text>;
+    }
+
+    return (
+        <Text color={color}>
+            <Text color={green}>
+                {"\n"}
+                <Spinner type="dots" />
+            </Text>
+            {` Current step: ${message}`}
+        </Text>
+    );
 };
 
 inquirer
