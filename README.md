@@ -2,7 +2,7 @@
 
 ### Experiment 1: [Bubble Tea and Go](bubble-tea)
 
-This experiment combines the [bubbletea](https://github.com/charmbracelet/bubbletea) TUI framework with Pulumi's Automation API in Go.
+This experiment combines the [Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI framework with Pulumi's Automation API in Go.
 
 ### Experiment 2: [Ink, Inquirer and TypeScript](nodejs-tui)
 

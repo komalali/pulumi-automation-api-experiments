@@ -75,11 +75,24 @@ interface UpdateProps {
     destroy: boolean;
 }
 
+interface DoneProps {
+    error: boolean;
+    message: string;
+}
+
+const DoneMessage = (props: DoneProps) => {
+    if (props.error) {
+        return (
+            <Text color={red}>{`\n❌ Failure! Error: ${props.message}\n`}</Text>
+        );
+    }
+    return <Text color={green}>{`\n✅ ${props.message}\n`}</Text>;
+};
+
 const Update = (props: UpdateProps) => {
     const [message, setMessage] = React.useState("");
-    const [color, setColor] = React.useState(undefined);
     const [done, setDone] = React.useState(false);
-    const [emoji, setEmoji] = React.useState("✅");
+    const [hasError, setHasError] = React.useState(false);
 
     React.useEffect(() => {
         const runPulumiUpdate = async () => {
@@ -118,9 +131,8 @@ const Update = (props: UpdateProps) => {
                 setMessage("Success!");
                 setDone(true);
             } catch (error) {
-                setColor(red);
-                setMessage(`Failure!: ${error.error()}`);
-                setEmoji("❌");
+                setMessage(error.error());
+                setHasError(true);
                 setDone(true);
             }
         };
@@ -129,11 +141,11 @@ const Update = (props: UpdateProps) => {
     }, []);
 
     if (done) {
-        return <Text color={color}>{`\n${emoji} ${message}`}</Text>;
+        return <DoneMessage error={hasError} message={message} />;
     }
 
     return (
-        <Text color={color}>
+        <Text>
             <Text color={green}>
                 {"\n"}
                 <Spinner type="dots" />
