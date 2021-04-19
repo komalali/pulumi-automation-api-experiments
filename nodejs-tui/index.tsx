@@ -1,11 +1,16 @@
 import * as inquirer from "inquirer";
 import * as React from "react";
-import { render, Text } from "ink";
+import { render, Text, Newline } from "ink";
 import Spinner from "ink-spinner";
 
 import { s3 } from "@pulumi/aws";
 import { PolicyDocument } from "@pulumi/aws/iam";
-import { InlineProgramArgs, LocalWorkspace } from "@pulumi/pulumi/automation";
+import {
+    EngineEvent,
+    InlineProgramArgs,
+    LocalWorkspace,
+} from "@pulumi/pulumi/automation";
+import { up } from "inquirer/lib/utils/readline";
 
 const green = "green";
 const red = "red";
@@ -71,10 +76,6 @@ interface Answers {
     destroy: boolean;
 }
 
-interface UpdateProps {
-    destroy: boolean;
-}
-
 interface DoneProps {
     error: boolean;
     message: string;
@@ -83,7 +84,11 @@ interface DoneProps {
 const DoneMessage = (props: DoneProps) => {
     if (props.error) {
         return (
-            <Text color={red}>{`\n❌ Failure! Error: ${props.message}\n`}</Text>
+            <Text color={red}>
+                <Newline />
+                {`❌ Failure! Error: ${props.message}`}
+                <Newline />
+            </Text>
         );
     }
     return <Text color={green}>{`\n✅ ${props.message}\n`}</Text>;
@@ -95,7 +100,7 @@ interface InProgressProps {
 
 const InProgressMessage = (props: InProgressProps) => (
     <Text>
-        {"\n"}
+        <Newline />
         <Text color={green}>
             <Spinner type="dots" />
         </Text>
@@ -103,54 +108,76 @@ const InProgressMessage = (props: InProgressProps) => (
     </Text>
 );
 
+interface UpdateProps {
+    destroy: boolean;
+}
+
 const Update = (props: UpdateProps) => {
     const [message, setMessage] = React.useState("");
     const [done, setDone] = React.useState(false);
     const [hasError, setHasError] = React.useState(false);
+    const [updatesInProgress, setUpdatesInProgress] = React.useState({});
+    const [updatesComplete, setUpdatesComplete] = React.useState({});
 
-    React.useEffect(() => {
-        const runPulumiUpdate = async () => {
-            try {
-                setMessage("Creating stack...");
-                const stack = await LocalWorkspace.createOrSelectStack(
-                    stackArgs
-                );
+    const onEvent = (event: EngineEvent) => {
+        if (event.resourcePreEvent) {
+            const inProg = { ...updatesInProgress };
+            inProg[event.resourcePreEvent.metadata.urn] =
+                event.resourcePreEvent.metadata.type;
+            setUpdatesInProgress(inProg);
+        }
+        if (event.resOutputsEvent) {
+            const inProg = { ...updatesInProgress };
+            const complete = { ...updatesComplete };
+            const { urn } = event.resOutputsEvent.metadata;
+            complete[urn] = event.resOutputsEvent.metadata.type;
+            delete inProg[urn];
+            setUpdatesInProgress(inProg);
+            setUpdatesComplete(complete);
+        }
+    };
 
-                setMessage("Ensuring plugins...");
-                await stack.workspace.installPlugin("aws", "v3.38.1");
+    const runPulumiUpdate = async () => {
+        try {
+            setMessage("Creating stack...");
+            const stack = await LocalWorkspace.createOrSelectStack(stackArgs);
 
-                setMessage("Setting configuration...");
-                await stack.setConfig("aws:region", {
-                    value: "us-west-2",
-                });
+            setMessage("Ensuring plugins...");
+            await stack.workspace.installPlugin("aws", "v3.38.1");
 
-                setMessage("Running refresh...");
-                await stack.refresh();
+            setMessage("Setting configuration...");
+            await stack.setConfig("aws:region", {
+                value: "us-west-2",
+            });
 
-                if (props.destroy) {
-                    setMessage("Running destroy...");
-                    await stack.destroy();
+            setMessage("Running refresh...");
+            await stack.refresh();
 
-                    setMessage("Deleting stack...");
-                    await stack.workspace.removeStack(stack.name);
+            if (props.destroy) {
+                setMessage("Running destroy...");
+                await stack.destroy();
 
-                    setMessage("Success!");
-                    setDone(true);
-                    return;
-                }
-
-                setMessage("Running update...");
-                await stack.up();
+                setMessage("Deleting stack...");
+                await stack.workspace.removeStack(stack.name);
 
                 setMessage("Success!");
                 setDone(true);
-            } catch (error) {
-                setMessage(error.error());
-                setHasError(true);
-                setDone(true);
+                return;
             }
-        };
 
+            setMessage("Running update...");
+            await stack.up({ onEvent });
+
+            setMessage("Success!");
+            setDone(true);
+        } catch (error) {
+            setMessage(error.error());
+            setHasError(true);
+            setDone(true);
+        }
+    };
+
+    React.useEffect(() => {
         runPulumiUpdate();
     }, []);
 
