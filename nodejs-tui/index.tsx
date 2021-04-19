@@ -89,6 +89,20 @@ const DoneMessage = (props: DoneProps) => {
     return <Text color={green}>{`\n✅ ${props.message}\n`}</Text>;
 };
 
+interface InProgressProps {
+    message: string;
+}
+
+const InProgressMessage = (props: InProgressProps) => (
+    <Text>
+        {"\n"}
+        <Text color={green}>
+            <Spinner type="dots" />
+        </Text>
+        {` Current step: ${props.message}`}
+    </Text>
+);
+
 const Update = (props: UpdateProps) => {
     const [message, setMessage] = React.useState("");
     const [done, setDone] = React.useState(false);
@@ -144,15 +158,7 @@ const Update = (props: UpdateProps) => {
         return <DoneMessage error={hasError} message={message} />;
     }
 
-    return (
-        <Text>
-            <Text color={green}>
-                {"\n"}
-                <Spinner type="dots" />
-            </Text>
-            {` Current step: ${message}`}
-        </Text>
-    );
+    return <InProgressMessage message={message} />;
 };
 
 inquirer
