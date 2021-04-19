@@ -1,6 +1,6 @@
 import * as inquirer from "inquirer";
 import * as React from "react";
-import { render, Text, Newline } from "ink";
+import { render, Text, Newline, Box } from "ink";
 import Spinner from "ink-spinner";
 
 import { s3 } from "@pulumi/aws";
@@ -10,7 +10,6 @@ import {
     InlineProgramArgs,
     LocalWorkspace,
 } from "@pulumi/pulumi/automation";
-import { up } from "inquirer/lib/utils/readline";
 
 const green = "green";
 const red = "red";
@@ -94,6 +93,37 @@ const DoneMessage = (props: DoneProps) => {
     return <Text color={green}>{`\n✅ ${props.message}\n`}</Text>;
 };
 
+interface ResourceUpdateListProps {
+    updatesInProgress: Record<string, string>;
+    updatesComplete: Record<string, string>;
+}
+
+const ResourceUpdateList = (props: ResourceUpdateListProps) => {
+    if (
+        Object.entries(props.updatesInProgress).length > 0 ||
+        Object.entries(props.updatesComplete).length > 0
+    ) {
+        return (
+            <Box borderStyle="round" borderColor="green">
+                <Text bold={true}>
+                    Updates in progress
+                    <Newline />
+                </Text>
+                {Object.entries(props.updatesInProgress).map(([key, val]) => (
+                    <Text
+                        strikethrough={!!props.updatesComplete[key]}
+                        key={key}
+                    >
+                        <Newline />
+                        {val}
+                    </Text>
+                ))}
+            </Box>
+        );
+    }
+    return null;
+};
+
 interface InProgressProps {
     message: string;
 }
@@ -105,6 +135,7 @@ const InProgressMessage = (props: InProgressProps) => (
             <Spinner type="dots" />
         </Text>
         {` Current step: ${props.message}`}
+        <Newline />
     </Text>
 );
 
@@ -127,12 +158,9 @@ const Update = (props: UpdateProps) => {
             setUpdatesInProgress(inProg);
         }
         if (event.resOutputsEvent) {
-            const inProg = { ...updatesInProgress };
             const complete = { ...updatesComplete };
             const { urn } = event.resOutputsEvent.metadata;
             complete[urn] = event.resOutputsEvent.metadata.type;
-            delete inProg[urn];
-            setUpdatesInProgress(inProg);
             setUpdatesComplete(complete);
         }
     };
@@ -185,7 +213,15 @@ const Update = (props: UpdateProps) => {
         return <DoneMessage error={hasError} message={message} />;
     }
 
-    return <InProgressMessage message={message} />;
+    return (
+        <Box>
+            <InProgressMessage message={message} />
+            <ResourceUpdateList
+                updatesComplete={updatesComplete}
+                updatesInProgress={updatesInProgress}
+            />
+        </Box>
+    );
 };
 
 inquirer
